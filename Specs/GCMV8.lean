@@ -217,7 +217,7 @@ example : GCMGmultV8 0x1099f4b39468565ccdd297a9df145877#128
     0x9e#8, 0x15#8, 0xa6#8, 0x00#8, 0x67#8, 0x29#8, 0x7e#8, 0x0f#8 ] := by rfl
 
 
-private def gcm_ghash_block (H : BitVec 128) (Xi : BitVec 128)
+def gcm_ghash_block (H : BitVec 128) (Xi : BitVec 128)
   (inp : BitVec 128) : BitVec 128 :=
   let H := (lo H) ++ (hi H)
   GCMV8.gcm_polyval H (Xi ^^^ inp)

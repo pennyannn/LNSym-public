@@ -50,26 +50,39 @@ example : let res :=
     }
   AESHWSetEncryptKey 0#128 (by simp) = res := by native_decide
 
+
+def KBR_from_AESKey (key : AESKey)
+  (h : key.rounds = 10#64 ∨ key.rounds = 12#64 ∨ key.rounds = 14#64)
+  : AESArm.KBR :=
+  if key.rounds = 10 then AESArm.AES128KBR
+  else if key.rounds = 12 then AESArm.AES192KBR
+  else AESArm.AES256KBR
+
+theorem KBR_from_AESKey_blocksize (key : AESKey)
+  (h : key.rounds = 10#64 ∨ key.rounds = 12#64 ∨ key.rounds = 14#64)
+  : AESArm.KBR.block_size (KBR_from_AESKey key h) = 128 := by
+  simp only [ KBR_from_AESKey,
+              AESArm.AES128KBR, AESArm.AES192KBR,
+              AESArm.AES256KBR, AESArm.BlockSize ]
+  cases h
+  · rename_i h; simp [h]
+  · rename_i h; cases h
+    · rename_i h; simp [h]
+    · rename_i h; simp [h]
+
+def flat_rev_block (in_block : List (BitVec 8))
+  (h : 8 * in_block.length = 128) : BitVec 128 :=
+  let in_block := BitVec.flatten in_block
+  rev_elems 128 8 (BitVec.cast h in_block) (by decide) (by decide)
+
 def AESHWEncrypt (in_block : List (BitVec 8)) (key : AESKey)
   (h1 : key.rounds = 10#64 ∨ key.rounds = 12#64 ∨ key.rounds = 14#64)
   (h2 : 8 * in_block.length = 128)
   : List (BitVec 8) :=
-  let p : AESArm.KBR :=
-    if key.rounds = 10 then AESArm.AES128KBR
-    else if key.rounds = 12 then AESArm.AES192KBR
-    else AESArm.AES256KBR
+  let p : AESArm.KBR := KBR_from_AESKey key h1
   -- AESArm.AES_encrypt_with_ks is little-endian
-  let in_block := BitVec.flatten in_block
-  let in_block :=
-    rev_elems 128 8 (BitVec.cast h2 in_block) (by decide) (by decide)
-  have h : p.block_size = 128 := by
-    simp only [ p, AESArm.AES128KBR, AESArm.AES192KBR,
-                AESArm.AES256KBR, AESArm.BlockSize ]
-    cases h1
-    · rename_i h; simp [h]
-    · rename_i h; cases h
-      · rename_i h; simp [h]
-      · rename_i h; simp [h]
+  let in_block := flat_rev_block in_block h2
+  have h : p.block_size = 128 := by apply KBR_from_AESKey_blocksize
   let res_block :=
     AESArm.AES_encrypt_with_ks (Param := p)
       (BitVec.cast h.symm in_block) key.rd_key
@@ -103,10 +116,7 @@ example : let in_block := List.replicate 16 0#8
 
 def AESHWCtr32EncryptBlocks_helper {Param : AESArm.KBR} (in_blocks : BitVec m)
   (i : Nat) (len : Nat) (key : AESKey) (ivec : BitVec 128) (acc : BitVec m)
-  (h1 : 128 ∣ m) (h2 : m / 128 = len)
-  (h3 : Param = AESArm.AES128KBR
-      ∨ Param = AESArm.AES192KBR
-      ∨ Param = AESArm.AES256KBR)
+  (h1 : 128 ∣ m) (h2 : m / 128 = len) (h3 : Param.block_size = 128)
   : BitVec m :=
   if i >= len then acc
   else
@@ -115,16 +125,10 @@ def AESHWCtr32EncryptBlocks_helper {Param : AESArm.KBR} (in_blocks : BitVec m)
     have h5 : hi - lo + 1 = 128 := by omega
     let curr_block : BitVec 128 :=
       BitVec.cast h5 $ BitVec.extractLsb hi lo in_blocks
-    have h4 : 128 = Param.block_size := by
-      cases h3
-      · rename_i h; simp only [h, AESArm.AES128KBR, AESArm.BlockSize]
-      · rename_i h; cases h
-        · rename_i h; simp only [h, AESArm.AES192KBR, AESArm.BlockSize]
-        · rename_i h; simp only [h, AESArm.AES256KBR, AESArm.BlockSize]
     let ivec_rev := rev_elems 128 8 ivec (by decide) (by decide)
     let res_block : BitVec 128 :=
-      BitVec.cast h4.symm $ AESArm.AES_encrypt_with_ks
-        (Param := Param) (BitVec.cast h4 ivec_rev) key.rd_key
+      BitVec.cast h3 $ AESArm.AES_encrypt_with_ks
+        (Param := Param) (BitVec.cast h3.symm ivec_rev) key.rd_key
     let res_block := rev_elems 128 8 res_block (by decide) (by decide)
     let res_block := res_block ^^^ curr_block
     let new_acc := BitVec.partInstall hi lo (BitVec.cast h5.symm res_block) acc
@@ -137,18 +141,8 @@ def AESHWCtr32EncryptBlocks (in_blocks : List (BitVec 8)) (len : Nat)
   (h1 : key.rounds = 10#64 ∨ key.rounds = 12#64 ∨ key.rounds = 14#64)
   (h2 : 16 ∣ in_blocks.length) (h3 : in_blocks.length / 16 = len)
   : List (BitVec 8) :=
-  let p : AESArm.KBR :=
-    if key.rounds = 10 then AESArm.AES128KBR
-    else if key.rounds = 12 then AESArm.AES192KBR
-    else AESArm.AES256KBR
-  have h : p = AESArm.AES128KBR
-         ∨ p = AESArm.AES192KBR
-         ∨ p = AESArm.AES256KBR := by
-    cases h1
-    · rename_i h; simp only [p, h]; simp
-    · rename_i h; cases h
-      · rename_i h; simp only [p, h]; simp
-      · rename_i h; simp only [p, h]; simp
+  let p : AESArm.KBR := KBR_from_AESKey key h1
+  have h : p.block_size = 128 := by apply KBR_from_AESKey_blocksize
   let res := AESHWCtr32EncryptBlocks_helper (Param := p)
     (BitVec.flatten in_blocks) 0 len key ivec
     (BitVec.zero (8 * in_blocks.length)) (by omega) (by omega) h
